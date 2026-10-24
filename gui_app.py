@@ -10,6 +10,7 @@ from matplotlib.figure import Figure
 # Backend Imports
 from vital_monitor import ProductionVitalMonitor
 import config
+from patient_dialog import PatientDetailsDialog
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -33,6 +34,14 @@ class CameraWorker:
     def start(self):
         self.running = True
         self.previewing = True
+        if self.cap is None or not self.cap.isOpened():
+            try:
+                self.cap = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)
+            except Exception:
+                self.cap = cv2.VideoCapture(0)
+            if self.cap and self.cap.isOpened():
+                self.cap.set(cv2.CAP_PROP_FPS, 30)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.thread.start()
 
@@ -67,42 +76,42 @@ class CameraWorker:
             return self.latest_frame, self.face_detected
 
     def _run_loop(self):
-        self.cap = cv2.VideoCapture(0)
-        self.cap.set(cv2.CAP_PROP_FPS, 30)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if self.cap is None or not self.cap.isOpened():
+            try:
+                self.cap = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)
+            except Exception:
+                self.cap = cv2.VideoCapture(0)
+            if self.cap and self.cap.isOpened():
+                self.cap.set(cv2.CAP_PROP_FPS, 30)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
         frame_interval = 1.0 / 30.0
         
         while self.running:
             if not self.previewing:
-                time.sleep(0.1)
+                time.sleep(0.05)
                 continue
 
-            loop_start = time.time()
-            
             if self.cap.isOpened():
                 ret, frame = self.cap.read()
-                if not ret: continue
+                if not ret: 
+                    time.sleep(0.01)
+                    continue
 
                 frame = cv2.flip(frame, 1)
                 
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                res = self.monitor.face_mesh.process(rgb)
+                
                 roi = None
-                face_found = self.face_detected
-                
-                should_run_ai = (self.frame_count % 4 == 0) or (not self.face_detected)
-                
-                if should_run_ai:
-                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    res = self.monitor.face_mesh.process(rgb)
-                    if res.multi_face_landmarks:
-                        face_found = True
-                        if self.recording:
-                            roi = self.monitor.extract_forehead_roi(frame, res.multi_face_landmarks[0])
-                    else:
-                        face_found = False
-                else:
-                    if self.recording and face_found:
-                        roi = self.monitor.get_last_roi(frame)
+                face_found = False
+                if res.multi_face_landmarks:
+                    face_found = True
+                    if self.recording:
+                        roi = self.monitor.extract_forehead_roi(frame, res.multi_face_landmarks[0])
+                elif self.recording:
+                    # Fallback to last known forehead ROI so frames are never dropped during blinks
+                    roi = self.monitor.get_last_roi(frame)
 
                 with self.lock:
                     self.latest_frame = frame
@@ -114,19 +123,18 @@ class CameraWorker:
                             self.recording = False
 
                 self.frame_count += 1
-                
-                elapsed = time.time() - loop_start
-                wait = frame_interval - elapsed
-                if wait > 0: time.sleep(wait)
 
         if self.cap: self.cap.release()
 
 class VitalSenseApp(ctk.CTk):
-    def __init__(self):
+    def __init__(self, patient_info=None):
         super().__init__()
         self.title("VitalSense AI - Medical Grade Monitor")
         self.geometry("1400x900")
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        
+        # Patient info
+        self.patient_info = patient_info or {"name": "", "age": "", "gender": "", "notes": ""}
         
         # START INVISIBLE FOR FADE-IN
         self.attributes("-alpha", 0.0)
@@ -146,6 +154,28 @@ class VitalSenseApp(ctk.CTk):
         self.after(100, self.animate_fade_in)
         # Load backend AFTER fade-in starts to keep UI responsive
         self.after(500, self.load_backend)
+
+    def get_display_patient_text(self):
+        name = self.patient_info.get("name", "").strip() or "Anonymous Subject"
+        extras = []
+        if self.patient_info.get("age"):
+            extras.append(f"{self.patient_info['age']}y")
+        if self.patient_info.get("gender"):
+            extras.append(self.patient_info["gender"])
+        extra_str = f"  •  {', '.join(extras)}" if extras else ""
+        return f"{name}{extra_str}"
+
+    def open_patient_dialog(self, on_success=None):
+        def _handle_submit(info):
+            self.patient_info = info
+            if self.monitor:
+                self.monitor.set_patient_info(info)
+            if hasattr(self, 'lbl_patient_name'):
+                self.lbl_patient_name.configure(text=f"👤 {self.get_display_patient_text()}")
+            if on_success:
+                on_success()
+
+        PatientDetailsDialog(self, current_info=self.patient_info, on_submit=_handle_submit)
 
     def animate_fade_in(self):
         alpha = 0.0
@@ -181,16 +211,28 @@ class VitalSenseApp(ctk.CTk):
         self.data_panel.grid_columnconfigure(0, weight=1)
         self.data_panel.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(self.data_panel, text="VITAL METRICS", font=("Roboto", 20, "bold")).grid(row=0, column=0, columnspan=2, pady=20)
+        ctk.CTkLabel(self.data_panel, text="VITAL METRICS", font=("Roboto", 20, "bold")).grid(row=0, column=0, columnspan=2, pady=(15, 6))
 
-        self.card_hr = self.create_card("HEART RATE", "--", "BPM", "#e74c3c", 1, 0)
-        self.card_hrv = self.create_card("HRV (RMSSD)", "--", "ms", "#3498db", 1, 1)
-        self.card_br = self.create_card("BREATHING", "--", "BrPM", "#2ecc71", 2, 0)
-        self.card_stress = self.create_card("STRESS LVL", "--", "%", "#f1c40f", 2, 1)
+        # Subject / Patient Badge Card
+        self.patient_card = ctk.CTkFrame(self.data_panel, fg_color="#1e1e1e", corner_radius=10, border_color="#3498db", border_width=1)
+        self.patient_card.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+        self.patient_card.grid_columnconfigure(0, weight=1)
+        self.patient_card.grid_columnconfigure(1, weight=0)
+
+        self.lbl_patient_name = ctk.CTkLabel(self.patient_card, text=f"👤 {self.get_display_patient_text()}", font=("Roboto", 13, "bold"), text_color="#3498db", anchor="w")
+        self.lbl_patient_name.grid(row=0, column=0, sticky="w", padx=12, pady=7)
+
+        self.btn_edit_patient = ctk.CTkButton(self.patient_card, text="Edit Details", width=80, height=26, font=("Roboto", 11, "bold"), fg_color="#2c3e50", hover_color="#34495e", corner_radius=6, command=self.open_patient_dialog)
+        self.btn_edit_patient.grid(row=0, column=1, sticky="e", padx=8, pady=7)
+
+        self.card_hr = self.create_card("HEART RATE", "--", "BPM", "#e74c3c", 2, 0)
+        self.card_hrv = self.create_card("HRV (RMSSD)", "--", "ms", "#3498db", 2, 1)
+        self.card_br = self.create_card("BREATHING", "--", "BrPM", "#2ecc71", 3, 0)
+        self.card_stress = self.create_card("STRESS LVL", "--", "%", "#f1c40f", 3, 1)
 
         self.graph_container = ctk.CTkFrame(self.data_panel, fg_color="#1a1a1a")
-        self.graph_container.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=10, pady=20)
-        self.data_panel.grid_rowconfigure(3, weight=1)
+        self.graph_container.grid(row=4, column=0, columnspan=2, sticky="nsew", padx=10, pady=15)
+        self.data_panel.grid_rowconfigure(4, weight=1)
 
         self.fig = Figure(figsize=(4, 3), dpi=100, facecolor='#1a1a1a')
         self.ax = self.fig.add_subplot(111)
@@ -203,19 +245,19 @@ class VitalSenseApp(ctk.CTk):
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
 
         self.status_lbl = ctk.CTkLabel(self.data_panel, text="System Ready", font=("Roboto", 14), text_color="gray")
-        self.status_lbl.grid(row=4, column=0, columnspan=2, pady=(10, 5))
+        self.status_lbl.grid(row=5, column=0, columnspan=2, pady=(5, 5))
 
         self.btn_action = ctk.CTkButton(self.data_panel, text="START MONITORING", height=50, 
                                       font=("Roboto", 16, "bold"), fg_color="#2980b9", 
                                       command=self.handle_button_click)
-        self.btn_action.grid(row=5, column=0, columnspan=2, sticky="ew", padx=20, pady=(20, 10))
+        self.btn_action.grid(row=6, column=0, columnspan=2, sticky="ew", padx=20, pady=(15, 10))
         self.btn_action.configure(state="disabled")
 
         self.btn_back = ctk.CTkButton(self.data_panel, text="⬅ BACK TO MENU", height=40, 
                                       font=("Roboto", 14, "bold"), fg_color="#7f8c8d", 
                                       hover_color="#95a5a6",
                                       command=self.return_to_menu)
-        self.btn_back.grid(row=6, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 20))
+        self.btn_back.grid(row=7, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 20))
 
     def create_card(self, title, val, unit, color, r, c):
         f = ctk.CTkFrame(self.data_panel, fg_color="#333333", border_color=color, border_width=2)
@@ -231,7 +273,7 @@ class VitalSenseApp(ctk.CTk):
         self.status_lbl.configure(text="Loading Models...")
         self.update()
         try:
-            self.monitor = ProductionVitalMonitor()
+            self.monitor = ProductionVitalMonitor(patient_info=self.patient_info)
             self.start_new_camera_session()
         except Exception as e:
             self.status_lbl.configure(text=f"Error: {e}", text_color="red")
@@ -296,9 +338,11 @@ class VitalSenseApp(ctk.CTk):
 
     def handle_button_click(self):
         if self.app_state == "IDLE":
-            self.app_state = "RECORDING"
-            self.btn_action.configure(text="STOP RECORDING", fg_color="#c0392b")
-            self.camera.start_recording()
+            # If name is not provided, prompt for details first
+            if not self.patient_info.get("name"):
+                self.open_patient_dialog(on_success=self.start_recording_flow)
+                return
+            self.start_recording_flow()
             
         elif self.app_state == "RECORDING":
             self.camera.stop_recording()
@@ -314,6 +358,11 @@ class VitalSenseApp(ctk.CTk):
             for card in [self.card_hr, self.card_hrv, self.card_br, self.card_stress]:
                 card.value.configure(text="--")
             self.start_new_camera_session()
+
+    def start_recording_flow(self):
+        self.app_state = "RECORDING"
+        self.btn_action.configure(text="STOP RECORDING", fg_color="#c0392b")
+        self.camera.start_recording()
 
     def finish_recording(self):
         self.app_state = "PROCESSING"
@@ -342,6 +391,7 @@ class VitalSenseApp(ctk.CTk):
             np_buffer[i]['time'] = item['time']
 
         try:
+            self.monitor.set_patient_info(self.patient_info)
             results = self.monitor.process_full_recording(np_buffer, valid_frames)
             self.after(0, lambda: self.show_results(results))
         except Exception as e:

@@ -1,0 +1,22 @@
+{
+    "patient": {
+        "name": "Umar",
+        "age": "20",
+        "gender": "Male",
+        "notes": "Sample"
+    },
+    "timestamp": 1792820946.06146,
+    "datetime": "2026-10-24 11:19:06",
+    "heart_rate": 56.35866669586426,
+    "breathing_rate": 6.2,
+    "hrv_sdnn": 203.50832766714834,
+    "hrv_rmssd": 339.40491370035704,
+    "baevsky_si": 28.673405954547096,
+    "stress_final": 28.930514753229478,
+    "components": {
+        "tscan": 70.44833336983032,
+        "pos": 55.529862773866256,
+        "resnet": 57.18747061786226,
+        "snr": 17.917738431065768
+    }
+}

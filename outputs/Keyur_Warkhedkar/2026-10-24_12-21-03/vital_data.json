@@ -1,0 +1,22 @@
+{
+    "patient": {
+        "name": "Keyur Warkhedkar",
+        "age": "20",
+        "gender": "Male",
+        "notes": ""
+    },
+    "timestamp": 1792824668.723671,
+    "datetime": "2026-10-24 12:21:08",
+    "heart_rate": 76.57528686523438,
+    "breathing_rate": 14.627806719999999,
+    "hrv_sdnn": 212.74382788990596,
+    "hrv_rmssd": 215.0318663845364,
+    "baevsky_si": 33.8810653800173,
+    "stress_final": 38.370588808117404,
+    "components": {
+        "tscan": 78.34762853402347,
+        "pos": 67.78390333842479,
+        "resnet": 76.57528686523438,
+        "snr": 8.324851342434348
+    }
+}

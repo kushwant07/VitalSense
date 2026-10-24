@@ -136,11 +136,17 @@ class LauncherApp(ctk.CTk):
         self.lbl_footer.grid(row=2, column=0, pady=20, sticky="s")
 
     def launch_scanner(self):
+        from patient_dialog import PatientDetailsDialog
+        PatientDetailsDialog(self, on_submit=self._on_patient_submitted)
+
+    def _on_patient_submitted(self, patient_info):
+        self.patient_info = patient_info
         self.animate_fade_out_and_destroy(self._open_gui)
 
     def _open_gui(self):
         try:
-            app = gui_app.VitalSenseApp()
+            patient_info = getattr(self, 'patient_info', None)
+            app = gui_app.VitalSenseApp(patient_info=patient_info)
             w, h = app.winfo_screenwidth(), app.winfo_screenheight()
             app.geometry(f"{w}x{h}+0+0")
             app.mainloop()

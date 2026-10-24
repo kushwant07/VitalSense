@@ -2,10 +2,16 @@ import os
 import sys
 import numpy as np
 
-# --- SILENCE LOGS ---
+# --- SILENCE LOGS & RUNTIME CONFIG ---
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 os.environ['GLOG_minloglevel'] = '2'
 os.environ["PYTHONMALLOC"] = "malloc"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OPENCV_AVFOUNDATION_SKIP_AUTH"] = "1"
+
+# NumPy 2.0+ compatibility
+if not hasattr(np, 'trapz'):
+    np.trapz = getattr(np, 'trapezoid', None)
 
 # --- PYINSTALLER RESOURCE PATH FIX ---
 def get_resource_path(relative_path):
@@ -15,7 +21,21 @@ def get_resource_path(relative_path):
     except Exception:
         base_path = os.path.abspath(".")
 
-    return os.path.join(base_path, relative_path)
+    primary_path = os.path.join(base_path, relative_path)
+    if os.path.exists(primary_path):
+        return primary_path
+    
+    # Fallback to root or models directory if relative path varies
+    basename = os.path.basename(relative_path)
+    root_path = os.path.join(base_path, basename)
+    if os.path.exists(root_path):
+        return root_path
+        
+    models_path = os.path.join(base_path, "models", basename)
+    if os.path.exists(models_path):
+        return models_path
+
+    return primary_path
 
 # --- CONSTANTS ---
 CAPTURE_FRAMES = 900 

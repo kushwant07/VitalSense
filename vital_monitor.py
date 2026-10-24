@@ -20,8 +20,9 @@ import models_loading
 import signal_processing as dsp
 
 class ProductionVitalMonitor:
-    def __init__(self):
+    def __init__(self, patient_info=None):
         self.loader = models_loading.ModelLoader()
+        self.patient_info = patient_info or {"name": "Anonymous", "age": "", "gender": "", "notes": ""}
         
         # 1. Load AI Models
         self.tscan = self.loader.load_tscan()
@@ -42,11 +43,19 @@ class ProductionVitalMonitor:
         # Smoothers
         self.br_history = []
 
+    def set_patient_info(self, info):
+        self.patient_info = info or {"name": "Anonymous", "age": "", "gender": "", "notes": ""}
+
     def create_output_directory(self):
         now = datetime.datetime.now()
         date_str = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%H-%M-%S")
-        self.output_dir = os.path.join("outputs", date_str, time_str)
+        
+        raw_name = self.patient_info.get("name", "Anonymous").strip()
+        safe_name = "".join(c for c in raw_name if c.isalnum() or c in ("-", "_", " ")).strip()
+        safe_name = safe_name.replace(" ", "_") if safe_name else "Anonymous"
+        
+        self.output_dir = os.path.join("outputs", safe_name, f"{date_str}_{time_str}")
         os.makedirs(self.output_dir, exist_ok=True)
 
     def save_report(self, data_dict, report_text):
@@ -146,9 +155,9 @@ class ProductionVitalMonitor:
         n_seg = min(len(rr_ms), 256)
         if n_seg > 1:
             f, p = dsp.welch(rr_ms/1000.0, fs=4.0, nperseg=n_seg, nfft=256)
-            vlf_pow = np.trapz(p[(f < 0.04)], f[(f < 0.04)])
-            lf_pow = np.trapz(p[(f>=0.04)&(f<0.15)], f[(f>=0.04)&(f<0.15)])
-            hf_pow = np.trapz(p[(f>=0.15)&(f<0.4)], f[(f>=0.15)&(f<0.4)])
+            vlf_pow = dsp._trapz(p[(f < 0.04)], f[(f < 0.04)])
+            lf_pow = dsp._trapz(p[(f>=0.04)&(f<0.15)], f[(f>=0.04)&(f<0.15)])
+            hf_pow = dsp._trapz(p[(f>=0.15)&(f<0.4)], f[(f>=0.15)&(f<0.4)])
             total_pow = vlf_pow + lf_pow + hf_pow
         else:
             lf_pow, hf_pow, vlf_pow, total_pow = 0,0,0,0
@@ -186,40 +195,64 @@ class ProductionVitalMonitor:
         clean_g = dsp.clean_signal(np.array(full_g), fs=real_fps)
         clean_r = dsp.clean_signal(np.array(full_r), fs=real_fps)
 
-        # 2. Segment Selection (Physics Gated)
+        # 1.5. Uniform Time-Grid Resampling (Prevents dropped-frame frequency scaling)
+        FS_GRID = 30.0
+        if duration > 1.0 and len(clean_ppg) > 30:
+            num_samples = int(duration * FS_GRID)
+            t_orig = np.linspace(0, duration, len(clean_ppg))
+            t_grid = np.linspace(0, duration, num_samples)
+            clean_ppg = np.interp(t_grid, t_orig, clean_ppg)
+            clean_pos = np.interp(t_grid, t_orig, clean_pos)
+            clean_g = np.interp(t_grid, t_orig, clean_g)
+            clean_r = np.interp(t_grid, t_orig, clean_r)
+            real_fps = FS_GRID
+
+        # 2. Multi-Window Ensemble & Segment Selection
         win_frames = int(12.0 * real_fps)
-        checkpoints = np.linspace(0, len(clean_ppg) - win_frames, 5, dtype=int)
+        step = max(int(2.0 * real_fps), 1)
+        checkpoints = list(range(0, len(clean_ppg) - win_frames, step))
+        if not checkpoints:
+            checkpoints = [0]
+            
         candidates = []
+        window_tscan_hrs = []
+        window_pos_hrs = []
         for i in checkpoints:
-            if i + win_frames >= len(clean_ppg): continue
+            if i + win_frames > len(clean_ppg): continue
             seg_ppg = clean_ppg[i : i+win_frames]
             seg_pos = clean_pos[i : i+win_frames]
-            # Use Green/Red for verification (Physics Check)
             score = self.calculate_physio_score(seg_ppg, clean_r[i:i+win_frames], clean_g[i:i+win_frames], fs=real_fps)
             candidates.append({'segment': seg_ppg, 'segment_pos': seg_pos, 'score': score})
             
-        # --- FIX: Ensure 'segment_pos' exists in fallback ---
+            # Compute window-level estimates
+            w_tscan = dsp.get_dominant_freq(seg_ppg, real_fps)
+            w_pos = dsp.get_dominant_freq(seg_pos, real_fps)
+            if 45.0 <= w_tscan <= 185.0:
+                window_tscan_hrs.append(w_tscan)
+            if 45.0 <= w_pos <= 185.0:
+                window_pos_hrs.append(w_pos)
+            
         if candidates:
             best = max(candidates, key=lambda x: x['score'])
         else:
             best = {
-                'segment': clean_ppg[-win_frames:], 
-                'segment_pos': clean_pos[-win_frames:], # <--- ADDED THIS LINE
+                'segment': clean_ppg[-win_frames:] if len(clean_ppg) >= win_frames else clean_ppg, 
+                'segment_pos': clean_pos[-win_frames:] if len(clean_pos) >= win_frames else clean_pos,
                 'score': 0
             }
             
         final_seg = best['segment']
-        final_pos = best['segment_pos'] # Now guaranteed to exist
+        final_pos = best['segment_pos']
 
         # 3. Lock Window (256)
         TARGET_LEN = 256
         if len(final_seg) > TARGET_LEN:
             seg_input = final_seg[-TARGET_LEN:]
         else:
-            seg_input = np.pad(final_seg, (TARGET_LEN - len(final_seg), 0), mode='edge')
+            seg_input = np.pad(final_seg, (max(0, TARGET_LEN - len(final_seg)), 0), mode='edge')
 
         # --- HR & SNR PIPELINE ---
-        ai_resnet = 70.0
+        ai_resnet = 72.0
         snr = 0.0
         seg_hr = None
         
@@ -234,65 +267,57 @@ class ProductionVitalMonitor:
             
             if np.std(seg_hr) < 1e-4: raise ValueError("Flatline")
             
-            # 3. Inference
+            # 3. ResNet Inference
             if self.resnet is not None:
                 seg_norm = (seg_hr - np.mean(seg_hr)) / (np.std(seg_hr) + 1e-6)
                 t_seg = torch.tensor(seg_norm, dtype=torch.float32).view(1, 1, -1).to(self.loader.device)
                 with torch.no_grad():
-                    ai_resnet = self.resnet(t_seg).item()
+                    ai_resnet = float(self.resnet(t_seg).item())
             else:
                 ai_resnet = dsp.get_dominant_freq(final_seg, real_fps)
-                
-            # 4. Gates
-            hr_fft = dsp.get_dominant_freq(seg_hr, real_fps)
-            
-            if abs(ai_resnet - hr_fft) > 12.0:
-                ai_resnet = hr_fft
-
-            hr_tscan_base = dsp.get_dominant_freq(final_seg, real_fps)
-            hr_pos_base = dsp.get_dominant_freq(final_pos, real_fps)
-            
-            if abs(ai_resnet - hr_tscan_base) > 20.0 and abs(ai_resnet - hr_pos_base) > 20.0:
-                ai_resnet = np.mean([hr_tscan_base, hr_pos_base])
                 
         except Exception:
             ai_resnet = dsp.get_dominant_freq(final_seg, real_fps)
 
-        hr_tscan = dsp.get_dominant_freq(final_seg, real_fps)
-        hr_pos = dsp.get_dominant_freq(final_pos, real_fps) 
-        
-        # Consensus
-        diffs = [abs(hr_tscan - hr_pos), abs(hr_tscan - ai_resnet), abs(hr_pos - ai_resnet)]
-        best_pair_idx = np.argmin(diffs)
-        
-        if diffs[best_pair_idx] > 15.0: 
-            consensus_hr = np.mean([hr_tscan, hr_pos, ai_resnet])
-        elif best_pair_idx == 0: 
-            consensus_hr = (hr_tscan + hr_pos) / 2.0
-        elif best_pair_idx == 1: 
-            consensus_hr = (hr_tscan + ai_resnet) / 2.0
-        else: 
-            consensus_hr = (hr_pos + ai_resnet) / 2.0
+        # Robust multi-window median consensus for TSCAN and POS
+        if window_tscan_hrs:
+            hr_tscan = float(np.median(window_tscan_hrs))
+        else:
+            hr_tscan = dsp.get_dominant_freq(final_seg, real_fps)
+            
+        if window_pos_hrs:
+            hr_pos = float(np.median(window_pos_hrs))
+        else:
+            hr_pos = dsp.get_dominant_freq(final_pos, real_fps)
 
-        if snr < 1.0: final_hr = hr_tscan
-        elif snr < 2.0: final_hr = 0.6*hr_tscan + 0.4*consensus_hr
-        else: final_hr = consensus_hr
-        
-        final_hr = np.clip(final_hr, 40, 180)
+        # Clip individual estimates to physiological limits [45, 185]
+        ai_resnet = float(np.clip(ai_resnet, 45.0, 185.0))
+        hr_tscan = float(np.clip(hr_tscan, 45.0, 185.0))
+        hr_pos = float(np.clip(hr_pos, 45.0, 185.0))
+
+        # --- ROBUST OPTICAL CONSENSUS ---
+        # TSCAN and POS are direct physical optical algorithms.
+        if abs(hr_tscan - hr_pos) <= 12.0:
+            optical_consensus = (hr_tscan + hr_pos) / 2.0
+        else:
+            optical_consensus = hr_tscan  # TSCAN facial motion model is primary
+
+        # ResNet validation: only include ResNet if it agrees with optical physics
+        valid_estimates = [hr_tscan, hr_pos]
+        if abs(ai_resnet - optical_consensus) <= 15.0:
+            valid_estimates.append(ai_resnet)
+
+        final_hr = float(np.clip(np.median(valid_estimates), 45.0, 185.0))
 
         # HRV & Breathing
         sdnn, rmssd, pnn50, ratio, baevsky_si = dsp.compute_hrv_features(final_seg, real_fps)
         
         # --- BREATHING PIPELINE ---
-        br = 15.0
-        # 1. FFT Baseline
-        br_fft = dsp.predict_breathing_heuristic(final_seg, real_fps)
+        # Use full clean_pos (30 seconds) for fine spectral resolution in breathing band
+        full_resp_signal = clean_pos if len(clean_pos) >= int(15.0 * real_fps) else final_seg
+        br_fft = dsp.predict_breathing_heuristic(full_resp_signal, real_fps)
         
-        # 2. SNR Check
-        resp_band = dsp.bandpass_filter(clean_pos, fs=real_fps, low=0.1, high=0.4, order=2)
-        resp_snr = np.var(resp_band) / (np.var(clean_pos-resp_band) + 1e-6)
-        
-        # 3. CNN Estimate
+        # CNN Estimate
         br_cnn = None
         if self.resp_model is not None:
             try:
@@ -307,19 +332,25 @@ class ProductionVitalMonitor:
                     br_cnn = dsp.extract_breathing_rate_from_envelope(cnn_out, real_fps)
                 else:
                     br_cnn = 6.0 + float(cnn_out) * (35.0 - 6.0) 
-            except: pass
+            except Exception:
+                pass
 
-        # 4. Consensus
+        # Consensus for Breathing
         candidates_br = []
-        if 6.0 < br_fft < 35.0: candidates_br.append(br_fft)
-        if br_cnn is not None and 6.0 < br_cnn < 35.0: candidates_br.append(br_cnn)
+        if 9.0 <= br_fft <= 28.0:
+            candidates_br.append(br_fft)
+        if br_cnn is not None and 9.0 <= br_cnn <= 28.0:
+            candidates_br.append(br_cnn)
         
-        if not candidates_br: br = br_fft
-        elif resp_snr > 1.5: br = np.mean(candidates_br)
-        else: br = br_fft
+        if candidates_br:
+            br = float(np.mean(candidates_br))
+        elif 8.0 <= br_fft <= 32.0:
+            br = float(br_fft)
+        else:
+            br = 15.0
 
         # EMA Smoothing
-        br = np.clip(br, 6.0, 35.0)
+        br = np.clip(br, 8.0, 32.0)
         alpha = 0.6
         if not self.br_history: final_br = br
         else: final_br = alpha * br + (1 - alpha) * self.br_history[-1]
@@ -340,10 +371,25 @@ class ProductionVitalMonitor:
 
         # Report
         ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        patient_name = self.patient_info.get("name", "Anonymous")
+        patient_age = self.patient_info.get("age", "")
+        patient_gender = self.patient_info.get("gender", "")
+        patient_notes = self.patient_info.get("notes", "")
+
+        patient_header = f"👤 Patient Name  : {patient_name}\n"
+        if patient_age:
+            patient_header += f"🎂 Age           : {patient_age}\n"
+        if patient_gender:
+            patient_header += f"⚧  Gender        : {patient_gender}\n"
+        if patient_notes:
+            patient_header += f"📝 Notes         : {patient_notes}\n"
+
         report_formatted = (
             "=============================================\n"
             f"🩺 VITALSENSE REPORT - {ts}\n"
             "=============================================\n"
+            f"{patient_header}"
+            "---------------------------------------------\n"
             f"❤️  Heart Rate    : {final_hr:.1f} BPM\n"
             f"    ├─ AI (TSCAN) : {hr_tscan:.1f}\n"
             f"    ├─ Math (POS) : {hr_pos:.1f}\n"
@@ -359,7 +405,14 @@ class ProductionVitalMonitor:
         print(report_formatted)
 
         data_packet = {
+            "patient": {
+                "name": patient_name,
+                "age": patient_age,
+                "gender": patient_gender,
+                "notes": patient_notes
+            },
             "timestamp": time.time(),
+            "datetime": ts,
             "heart_rate": final_hr,
             "breathing_rate": final_br,
             "hrv_sdnn": sdnn,
@@ -382,11 +435,12 @@ class ProductionVitalMonitor:
 
     def save_plots(self, waveform, fs, score):
         if not self.output_dir: return
+        patient_name = self.patient_info.get("name", "Anonymous")
         fig = Figure(figsize=(10, 8), dpi=100); FigureCanvasAgg(fig) 
         fig.patch.set_facecolor('black')
         ax1 = fig.add_subplot(2, 1, 1); ax1.set_facecolor('black')
         ax1.plot(waveform, color='#00ff00', linewidth=2)
-        ax1.set_title(f"Extracted Pulse Wave (Score: {score:.2f})", color='white')
+        ax1.set_title(f"Extracted Pulse Wave - {patient_name} (Score: {score:.2f})", color='white')
         ax1.tick_params(colors='white'); ax1.grid(True, alpha=0.2)
         ax2 = fig.add_subplot(2, 1, 2); ax2.set_facecolor('black')
         n_seg = min(len(waveform), 256)
