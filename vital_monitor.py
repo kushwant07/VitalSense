@@ -31,12 +31,17 @@ class ProductionVitalMonitor:
         self.stress_model = self.loader.load_stress_model() 
         
         # 2. Face Detection
-        self.face_mesh = mp.solutions.face_mesh.FaceMesh(
-            max_num_faces=1, 
-            refine_landmarks=False,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        )
+        try:
+            from face_mesh_compat import FaceMeshDetector
+            self.face_mesh = FaceMeshDetector(
+                max_num_faces=1, 
+                refine_landmarks=False,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
+        except Exception as e:
+            print(f"[WARN] FaceMeshDetector initialization error: {e}")
+            self.face_mesh = None
         self.roi_state = None 
         self.output_dir = None
         

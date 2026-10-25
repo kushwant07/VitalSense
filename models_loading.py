@@ -17,7 +17,12 @@ except ImportError:
 
 class ModelLoader:
     def __init__(self):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
         print(f"⚙️  Compute Device: {self.device}")
 
     def load_tscan(self):
@@ -92,6 +97,11 @@ class ModelLoader:
             print("❌ Stress model file missing.")
             return None
         try:
+            with open(config.STRESS_MODEL_PATH, 'rb') as mf:
+                mdata = mf.read()
+            if b'\r\n' in mdata:
+                with open(config.STRESS_MODEL_PATH, 'wb') as mf:
+                    mf.write(mdata.replace(b'\r\n', b'\n'))
             model = lgb.Booster(model_file=config.STRESS_MODEL_PATH)
             print("✅ Stress Model Loaded Successfully.")
             return model

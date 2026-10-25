@@ -7,6 +7,7 @@ class PatientDetailsDialog(ctk.CTkToplevel):
         self.title("VitalSense - Subject Details")
         self.geometry("480x520")
         self.resizable(False, False)
+        self.configure(fg_color="#ffffff")
         
         self.on_submit = on_submit
         self.submitted = False
@@ -19,7 +20,7 @@ class PatientDetailsDialog(ctk.CTkToplevel):
         self.transient(parent)
         self.grab_set()
         
-        # Center the dialog on the screen/parent
+        # Center the dialog on screen
         self.update_idletasks()
         try:
             pw = parent.winfo_width()
@@ -39,26 +40,52 @@ class PatientDetailsDialog(ctk.CTkToplevel):
         self._build_ui()
 
     def _build_ui(self):
-        container = ctk.CTkFrame(self, fg_color="#1e1e1e", corner_radius=0)
-        container.pack(fill="both", expand=True, padx=20, pady=20)
+        container = ctk.CTkFrame(self, fg_color="#ffffff", corner_radius=0)
+        container.pack(fill="both", expand=True, padx=24, pady=20)
 
         # Header
-        lbl_icon = ctk.CTkLabel(container, text="🩺", font=("Arial", 36))
-        lbl_icon.pack(pady=(15, 5))
+        lbl_icon = ctk.CTkLabel(container, text="👤", font=("Arial", 36))
+        lbl_icon.pack(pady=(10, 5))
 
-        lbl_title = ctk.CTkLabel(container, text="Subject Information", font=("Roboto Medium", 22, "bold"), text_color="#3498db")
-        lbl_title.pack(pady=(0, 5))
+        lbl_title = ctk.CTkLabel(
+            container, 
+            text="Subject Registration", 
+            font=("Roboto Medium", 22, "bold"), 
+            text_color="#0f172a"
+        )
+        lbl_title.pack(pady=(0, 4))
 
-        lbl_sub = ctk.CTkLabel(container, text="Reports will be saved under this person's name", font=("Roboto", 13), text_color="#888888")
-        lbl_sub.pack(pady=(0, 20))
+        lbl_sub = ctk.CTkLabel(
+            container, 
+            text="Session diagnostics will be cataloged under this profile", 
+            font=("Roboto", 13), 
+            text_color="#64748b"
+        )
+        lbl_sub.pack(pady=(0, 18))
 
         # Form Frame
         form = ctk.CTkFrame(container, fg_color="transparent")
-        form.pack(fill="x", padx=15)
+        form.pack(fill="x")
 
         # Name Field (Required)
-        ctk.CTkLabel(form, text="Full Name / Patient ID *", font=("Roboto", 13, "bold"), anchor="w").pack(fill="x", pady=(5, 2))
-        self.entry_name = ctk.CTkEntry(form, placeholder_text="e.g. John Doe", height=38, font=("Roboto", 14), corner_radius=8)
+        ctk.CTkLabel(
+            form, 
+            text="Full Name / Patient ID *", 
+            font=("Roboto", 13, "bold"), 
+            text_color="#334155", 
+            anchor="w"
+        ).pack(fill="x", pady=(4, 2))
+        
+        self.entry_name = ctk.CTkEntry(
+            form, 
+            placeholder_text="e.g. John Doe", 
+            height=40, 
+            font=("Roboto", 14), 
+            fg_color="#f8fafc",
+            border_color="#cbd5e1",
+            text_color="#0f172a",
+            corner_radius=8
+        )
         self.entry_name.pack(fill="x", pady=(0, 10))
         if self.current_info.get("name"):
             self.entry_name.insert(0, self.current_info["name"])
@@ -70,43 +97,110 @@ class PatientDetailsDialog(ctk.CTkToplevel):
         row_age_gender.grid_columnconfigure(1, weight=1)
 
         # Age
-        ctk.CTkLabel(row_age_gender, text="Age (Optional)", font=("Roboto", 13), anchor="w").grid(row=0, column=0, sticky="w", padx=(0, 5), pady=(0, 2))
-        self.entry_age = ctk.CTkEntry(row_age_gender, placeholder_text="e.g. 28", height=38, font=("Roboto", 14), corner_radius=8)
+        ctk.CTkLabel(
+            row_age_gender, 
+            text="Age (Optional)", 
+            font=("Roboto", 13), 
+            text_color="#334155", 
+            anchor="w"
+        ).grid(row=0, column=0, sticky="w", padx=(0, 5), pady=(0, 2))
+        
+        self.entry_age = ctk.CTkEntry(
+            row_age_gender, 
+            placeholder_text="e.g. 28", 
+            height=40, 
+            font=("Roboto", 14), 
+            fg_color="#f8fafc",
+            border_color="#cbd5e1",
+            text_color="#0f172a",
+            corner_radius=8
+        )
         self.entry_age.grid(row=1, column=0, sticky="ew", padx=(0, 5))
         if self.current_info.get("age"):
             self.entry_age.insert(0, str(self.current_info["age"]))
 
         # Gender
-        ctk.CTkLabel(row_age_gender, text="Gender (Optional)", font=("Roboto", 13), anchor="w").grid(row=0, column=1, sticky="w", padx=(5, 0), pady=(0, 2))
+        ctk.CTkLabel(
+            row_age_gender, 
+            text="Gender (Optional)", 
+            font=("Roboto", 13), 
+            text_color="#334155", 
+            anchor="w"
+        ).grid(row=0, column=1, sticky="w", padx=(5, 0), pady=(0, 2))
+        
         gender_options = ["Select Gender", "Male", "Female", "Other", "Prefer not to say"]
         default_gender = self.current_info.get("gender") if self.current_info.get("gender") in gender_options else "Select Gender"
-        self.gender_menu = ctk.CTkOptionMenu(row_age_gender, values=gender_options, height=38, font=("Roboto", 13), corner_radius=8)
+        self.gender_menu = ctk.CTkOptionMenu(
+            row_age_gender, 
+            values=gender_options, 
+            height=40, 
+            font=("Roboto", 13), 
+            fg_color="#f8fafc",
+            button_color="#e2e8f0",
+            button_hover_color="#cbd5e1",
+            text_color="#0f172a",
+            corner_radius=8
+        )
         self.gender_menu.set(default_gender)
         self.gender_menu.grid(row=1, column=1, sticky="ew", padx=(5, 0))
 
         # Notes / Session Tag
-        ctk.CTkLabel(form, text="Session Notes / Tag (Optional)", font=("Roboto", 13), anchor="w").pack(fill="x", pady=(5, 2))
-        self.entry_notes = ctk.CTkEntry(form, placeholder_text="e.g. Resting, Post-workout", height=38, font=("Roboto", 14), corner_radius=8)
-        self.entry_notes.pack(fill="x", pady=(0, 15))
+        ctk.CTkLabel(
+            form, 
+            text="Session Notes / Clinical Tag (Optional)", 
+            font=("Roboto", 13), 
+            text_color="#334155", 
+            anchor="w"
+        ).pack(fill="x", pady=(4, 2))
+        
+        self.entry_notes = ctk.CTkEntry(
+            form, 
+            placeholder_text="e.g. Resting, Post-exercise", 
+            height=40, 
+            font=("Roboto", 14), 
+            fg_color="#f8fafc",
+            border_color="#cbd5e1",
+            text_color="#0f172a",
+            corner_radius=8
+        )
+        self.entry_notes.pack(fill="x", pady=(0, 12))
         if self.current_info.get("notes"):
             self.entry_notes.insert(0, self.current_info["notes"])
 
-        self.lbl_error = ctk.CTkLabel(container, text="", font=("Roboto", 12), text_color="#e74c3c")
-        self.lbl_error.pack(pady=(0, 10))
+        self.lbl_error = ctk.CTkLabel(container, text="", font=("Roboto", 12), text_color="#ef4444")
+        self.lbl_error.pack(pady=(0, 8))
 
         # Buttons
         btn_frame = ctk.CTkFrame(container, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=15, pady=(5, 10))
+        btn_frame.pack(fill="x", pady=(4, 0))
         btn_frame.grid_columnconfigure(0, weight=1)
         btn_frame.grid_columnconfigure(1, weight=1)
 
-        btn_cancel = ctk.CTkButton(btn_frame, text="Cancel", fg_color="#444444", hover_color="#555555",
-                                   height=42, font=("Roboto", 14), corner_radius=10, command=self.cancel)
-        btn_cancel.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        btn_cancel = ctk.CTkButton(
+            btn_frame, 
+            text="Cancel", 
+            fg_color="#f1f5f9", 
+            hover_color="#e2e8f0",
+            text_color="#334155",
+            height=44, 
+            font=("Roboto", 14, "bold"), 
+            corner_radius=10, 
+            command=self.cancel
+        )
+        btn_cancel.grid(row=0, column=0, sticky="ew", padx=(0, 6))
 
-        btn_confirm = ctk.CTkButton(btn_frame, text="Confirm & Proceed", fg_color="#2ecc71", hover_color="#27ae60",
-                                    height=42, font=("Roboto", 14, "bold"), corner_radius=10, command=self.confirm)
-        btn_confirm.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        btn_confirm = ctk.CTkButton(
+            btn_frame, 
+            text="Confirm & Proceed", 
+            fg_color="#0284c7", 
+            hover_color="#0369a1",
+            text_color="white",
+            height=44, 
+            font=("Roboto", 14, "bold"), 
+            corner_radius=10, 
+            command=self.confirm
+        )
+        btn_confirm.grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
         # Focus name entry and bind Return key
         self.entry_name.focus_set()

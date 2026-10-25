@@ -1,3 +1,9 @@
+import sys
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception: pass
 import os
 import sys
 import subprocess
@@ -47,7 +53,9 @@ def bootstrap():
     args = [venv_python, __file__] + sys.argv[1:]
     
     if platform.system() == "Windows":
-        subprocess.call(args)
+        env = os.environ.copy()
+        env['PYTHONUTF8'] = '1'
+        subprocess.call(args, env=env)
     else:
         os.execv(venv_python, args)
 
